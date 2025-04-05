@@ -1,4 +1,6 @@
 import { WebContainer } from '@webcontainer/api';
+import type { FileSystemTree } from '@webcontainer/api';
+import { Terminal } from 'xterm';
 
 let webcontainerInstance: WebContainer;
 
@@ -9,73 +11,39 @@ export async function getWebContainerInstance() {
   return webcontainerInstance;
 }
 
-export async function installDependencies(terminal: any) {
-  const installProcess = await webcontainerInstance.spawn('npm', ['install']);
-  
-  installProcess.output.pipeTo(new WritableStream({
-    write(data) {
-      terminal.write(data);
-    }
-  }));
-  
-  return installProcess.exit;
-}
-
-export async function startDevServer(terminal: any) {
-  const serverProcess = await webcontainerInstance.spawn('npm', ['run', 'start']);
-  
-  serverProcess.output.pipeTo(new WritableStream({
-    write(data) {
-      terminal.write(data);
-    }
-  }));
-
-  // Wait for server to be ready
-  const ready = await new Promise<void>((resolve) => {
-    webcontainerInstance.on('server-ready', (port, url) => {
-      resolve();
-    });
+export async function runNpxCommand(terminal: Terminal, command: string[]) {
+  const process = await webcontainerInstance.spawn('npx', command, {
+    terminal: {
+      cols: 80,
+      rows: 24,
+    },
   });
 
-  return serverProcess;
+  // Connect stdio to terminal
+  process.output.pipeTo(new WritableStream({
+    write(data: string) {
+      terminal.write(data);
+    }
+  }));
+
+  // Connect terminal input to process stdin
+  terminal.onData((data: string) => {
+    process.input.write(data);
+  });
+
+  return process;
 }
 
-export type FileSystemTree = {
-  [key: string]: {
-    file?: { contents: string };
-    directory?: FileSystemTree;
-  };
-};
-
+// Basic package.json to ensure npm/npx is available
 export const defaultFiles: FileSystemTree = {
   'package.json': {
     file: {
       contents: JSON.stringify({
-        name: 'example-app',
+        name: 'npx-runner',
         type: 'module',
-        dependencies: {
-          express: '^4.18.2'
-        },
-        scripts: {
-          start: 'node server.js'
-        }
+        version: '1.0.0',
+        private: true
       }, null, 2)
-    }
-  },
-  'server.js': {
-    file: {
-      contents: `
-import express from 'express';
-const app = express();
-const port = 3001;
-
-app.get('/', (req, res) => {
-  res.json({ message: 'Hello from WebContainer!' });
-});
-
-app.listen(port, () => {
-  console.log(\`Server running at http://localhost:\${port}\`);
-});`
     }
   }
 }; 
